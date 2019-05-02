@@ -23,6 +23,28 @@ Arguments iso_to {A B} _.
 Definition iso_id {A} : iso A A :=
   {| iso_from := fun i => i ; iso_to := fun i => i |}.
 
+Definition iso_prod {A A' B B'}
+  : iso A A' -> iso B B' -> iso (A * B) (A' * B') :=
+  fun ia ib =>
+    {| iso_from := fun x => (iso_from ia (fst x), iso_from ib (snd x))
+     ; iso_to   := fun x => (iso_to ia (fst x), iso_to ib (snd x))
+    |}.
+
+Definition iso_sum {A A' B B'}
+  : iso A A' -> iso B B' -> iso (A + B) (A' + B') :=
+  fun ia ib =>
+    {| iso_from := fun x =>
+         match x with
+         | inl y => inl (iso_from ia y)
+         | inr z => inr (iso_from ib z)
+         end
+     ; iso_to := fun x =>
+         match x with
+         | inl y => inl (iso_to ia y)
+         | inr z => inr (iso_to ib z)
+         end
+    |}.
+
 (** ** Generic collections *)
 
 (** Length-indexed lists *)
@@ -40,17 +62,8 @@ Fixpoint tyvar (n : nat) : Type :=
   | S n => option (tyvar n)
   end.
 
-(** Bounded lookup *)
-Fixpoint lookup_tyvar {A : Type} {n : nat}
-  : tyvar n -> vec A n -> A :=
-  match n with
-  | O => fun y => match y with end
-  | S n => fun tv ts =>
-    match tv with
-    | None => fst ts
-    | Some tv => lookup_tyvar tv (snd ts)
-    end
-  end.
+Definition N0 {n : nat} : tyvar (S n) := None.
+Definition NS {n : nat} : tyvar n -> tyvar (S n) := Some.
 
 (** Heterogeneous lists (list-indexed lists) *)
 Fixpoint dvec {A : Type} (f : A -> Type) (xs : list A)
@@ -67,6 +80,40 @@ Fixpoint zipvec {A B : Type} {n : nat} (f : A -> B -> Type)
   | O => fun _ _ => unit
   | S n => fun ts1 ts2 =>
       (f (fst ts1) (fst ts2) * zipvec f (snd ts1) (snd ts2))%type
+  end.
+
+(** ** Bounded lookup *)
+
+Fixpoint lookup_tyvar {A : Type} {n : nat}
+  : tyvar n -> vec A n -> A :=
+  match n with
+  | O => fun y => match y with end
+  | S n => fun tv ts =>
+    match tv with
+    | None => fst ts
+    | Some tv => lookup_tyvar tv (snd ts)
+    end
+  end.
+
+Fixpoint lookup_list {A : Type} (xs : list A) : tyvar (length xs) -> A :=
+  match xs with
+  | [] => fun v => match v with end
+  | x :: xs => fun v =>
+    match v with
+    | None => x
+    | Some v => lookup_list xs v
+    end
+  end.
+
+Fixpoint lookup_var {A} {f : A -> Type} {vs : list A}
+  : forall v : tyvar (length vs), dvec f vs -> f (lookup_list vs v) :=
+  match vs with
+  | [] => fun v => match v with end
+  | t :: vs => fun v vls =>
+    match v with
+    | None => fst vls
+    | Some v => lookup_var v (snd vls)
+    end
   end.
 
 (** Bounded lookup *)
@@ -144,6 +191,23 @@ Fixpoint shift_rvec (m : nat) {n : nat}
     end
   end.
 
+(** Length-indexed lists as an [Inductive] type *)
+Inductive vec' (A : Type) : nat -> Type :=
+| nil_vec : vec' A 0
+| cons_vec {n} : A -> vec' A n -> vec' A (S n)
+.
+
+Arguments nil_vec {A}.
+Arguments cons_vec {A n}.
+
+Definition map_vec' {A B : Type} (f : A -> B)
+  : forall {n : nat}, vec' A n -> vec' B n :=
+  fix _map _ xs :=
+    match xs with
+    | nil_vec => nil_vec
+    | cons_vec x xs => cons_vec (f x) (_map _ xs)
+    end.
+
 (** * Polymorphic lambda calculus *)
 
 (** ** Syntax *)
@@ -154,44 +218,78 @@ Inductive ty (n : nat) : Type :=
 | Arrow : ty n -> ty n -> ty n
 | Forall : ty (S n) -> ty n
 | Tyvar : tyvar n -> ty n
-| Bool : ty n
+
+(* Basic data types *)
+| Unit : ty n
+| Prod : ty n -> ty n -> ty n
+| Sum : ty n -> ty n -> ty n
 .
 
-Arguments Arrow {n}.
+Arguments Arrow  {n}.
 Arguments Forall {n}.
-Arguments Tyvar {n}.
-Arguments Bool {n}.
+Arguments Tyvar  {n}.
 
-Fixpoint var (n : nat) (vs : list (ty n))
-  : ty n -> Type :=
-  match vs with
-  | [] => void1
-  | t :: vs => sum1 (eq t) (var n vs)
-  end.
+Arguments Unit {n}.
+Arguments Prod {n}.
+Arguments Sum  {n}.
+
+Delimit Scope ty_scope with ty.
+Bind Scope ty_scope with ty.
+
+Infix "->" := Arrow : ty_scope.
+Coercion Tyvar : tyvar >-> ty.
+
+Definition V0 {n} : tyvar (S n) := N0.
+Definition V1 {n} : tyvar (S (S n)) := NS N0.
+Definition V2 {n} : tyvar (S (S (S n))) := NS (NS N0).
 
 Fixpoint shift_ty (m : nat) {n : nat} (t : ty n) : ty (S n) :=
   match t with
   | Arrow t1 t2 => Arrow (shift_ty m t1) (shift_ty m t2)
   | Forall t => Forall (shift_ty (S m) t)
   | Tyvar v => @Tyvar (S n) (shift_tyvar m v)
-  | Bool => Bool
+  | Unit => Unit
+  | Prod t1 t2 => Prod (shift_ty m t1) (shift_ty m t2)
+  | Sum t1 t2 => Sum (shift_ty m t1) (shift_ty m t2)
   end.
 
 (** *** Terms *)
+
+(** Constants *)
+Inductive cn {n : nat} : ty n -> Type :=
+| One : cn Unit
+| Pair : cn (Forall (Forall (V1 -> V0 -> Prod V1 V0)))
+| Proj1 : cn (Forall (Forall (Prod V1 V0 -> V1)))
+| Proj2 : cn (Forall (Forall (Prod V1 V0 -> V0)))
+| Inl : cn (Forall (Forall (V1 -> Sum V1 V0)))
+| Inr : cn (Forall (Forall (V0 -> Sum V1 V0)))
+| Case : cn (Forall (Forall (Forall (
+    (V2 -> V0) ->
+    (V1 -> V0) ->
+    Sum V2 V1 -> V0))))
+.
+
+Arguments One {n}.
+Arguments Pair {n}.
+Arguments Proj1 {n}.
+Arguments Proj2 {n}.
+Arguments Inl {n}.
+Arguments Inr {n}.
+Arguments Case {n}.
 
 Inductive tm (n : nat) (vs : list (ty n)) : ty n -> Type :=
 | TAbs {t} : tm (S n) (map (shift_ty 0) vs) t -> tm n vs (Forall t)
 | Abs {t1 t2} : tm n (t1 :: vs) t2 -> tm n vs (Arrow t1 t2)
 | App {t1 t2} : tm n vs (Arrow t1 t2) -> tm n vs t1 -> tm n vs t2
-| Con : bool -> tm n vs Bool
-| Var {t} : var n vs t -> tm n vs t
+| Var (v : tyvar (length vs)) : tm n vs (lookup_list vs v)
+| Con {t} : cn t -> tm n vs t
 .
 
 Arguments TAbs {n vs t}.
-Arguments Abs {n vs t1 t2}.
-Arguments App {n vs t1 t2}.
-Arguments Con {n vs}.
-Arguments Var {n vs t}.
+Arguments Abs  {n vs t1 t2}.
+Arguments App  {n vs t1 t2}.
+Arguments Var  {n vs}.
+Arguments Con  {n vs t}.
 
 (** ** Semantics *)
 
@@ -202,7 +300,9 @@ Fixpoint sem_ty {n : nat} (ts : vec Type n) (t : ty n)
   | Arrow t1 t2 => sem_ty ts t1 -> sem_ty ts t2
   | Forall t => forall (t0 : Type), @sem_ty (S n) (t0, ts) t
   | Tyvar tv => lookup_tyvar tv ts
-  | Bool => bool
+  | Unit => unit
+  | Prod t1 t2 => sem_ty ts t1 * sem_ty ts t2
+  | Sum t1 t2 => sem_ty ts t1 + sem_ty ts t2
   end.
 
 Fixpoint shift_sem (m : nat) {n : nat} {ts : vec Type n} (t0 : Type) (t : ty n)
@@ -223,7 +323,9 @@ Fixpoint shift_sem (m : nat) {n : nat} {ts : vec Type n} (t0 : Type) (t : ty n)
            iso_to i (f a)
       |} : iso (forall (a : Type), @sem_ty (S n) (a, ts) t) _
   | Tyvar tv => shift_sem_var m t0 tv
-  | Bool => iso_id
+  | Unit => iso_id
+  | Prod t1 t2 => iso_prod (shift_sem m t0 t1) (shift_sem m t0 t2)
+  | Sum t1 t2 => iso_sum (shift_sem m t0 t1) (shift_sem m t0 t2)
   end.
 
 Fixpoint shift_dvec {n : nat} {ts : vec Type n} {vs : list (ty n)} (t0 : Type)
@@ -234,18 +336,19 @@ Fixpoint shift_dvec {n : nat} {ts : vec Type n} {vs : list (ty n)} (t0 : Type)
     (iso_from (shift_sem 0 t0 _) (fst ts), shift_dvec t0 (snd ts))
   end.
 
-(* TODO: Generalize *)
-Fixpoint lookup_var {n} {f : ty n -> Type} {vs t}
-  : var n vs t -> dvec f vs -> f t :=
-  match vs with
-  | [] => fun v => match v with end
-  | t :: vs => fun v =>
-    match v with
-    | inl1 e =>
-      match e with
-      | eq_refl => fun vls => fst vls
-      end
-    | inr1 v => fun vls => lookup_var v (snd vls)
+Definition sem_cn {n : nat} (ts : vec Type n) {t : ty n} (c : cn t)
+  : sem_ty ts t :=
+  match c with
+  | One => tt
+  | Pair => @pair
+  | Proj1 => @fst
+  | Proj2 => @snd
+  | Inl => @inl
+  | Inr => @inr
+  | Case => fun _ _ _ f g x =>
+    match x with
+    | inl y => f y
+    | inr z => g z
     end
   end.
 
@@ -259,8 +362,8 @@ Fixpoint sem_tm
   | TAbs u => fun t0 => @sem_tm (S n) (t0, ts) _ (shift_dvec t0 vls) _ u
   | Abs u => fun x => @sem_tm _ ts (_ :: vs) (x, vls) _ u
   | App u1 u2 => (sem_tm ts vls u1) (sem_tm ts vls u2)
-  | Con b => b
   | Var v => lookup_var v vls
+  | Con c => sem_cn _ c
   end.
 
 (** Relational semantics of types *)
@@ -276,7 +379,17 @@ Fixpoint sem2_ty {n : nat}
       forall (t01 t02 : Type) (r0 : t01 -> t02 -> Prop),
         @sem2_ty (S n) (t01, ts1) (t02, ts2) (r0, rs) t (f1 t01) (f2 t02)
   | Tyvar tv => lookup_tyvar_zipvec tv rs
-  | Bool => eq
+
+  | Unit => fun _ _ => True
+  | Prod t1 t2 => fun x1 x2 =>
+      sem2_ty rs t1 (fst x1) (fst x2) /\
+      sem2_ty rs t2 (snd x1) (snd x2)
+  | Sum t1 t2 => fun x1 x2 =>
+      match x1, x2 with
+      | inl y1, inl y2 => sem2_ty rs t1 y1 y2
+      | inr z1, inr z2 => sem2_ty rs t2 z1 z2
+      | _, _ => False
+      end
   end.
 
 (** Relational semantics of contexts *)
@@ -357,6 +470,9 @@ Proof.
   - split; intros.
     + auto using param_shift_tyvar_from.
     + eauto using param_shift_tyvar_to.
+  - split; intros; destruct H; split; apply IHt1 + apply IHt2; auto.
+  - split; intros; destruct (_ : _ + _), (_ : _ + _);
+      contradiction + apply IHt1 + apply IHt2; auto.
 Qed.
 
 Lemma param_tabs {n : nat}
@@ -380,18 +496,25 @@ Lemma param_var {n : nat}
   (ts1 ts2 : vec Type n)
   (rs : rvec ts1 ts2)
   (vs : list (ty n)) (vls1 : dvec (sem_ty ts1) vs) (vls2 : dvec (sem_ty ts2) vs)
-  (t : ty n)
-  (v : var n vs t)
+  (v : tyvar (length vs))
   : sem2_ctx rs vls1 vls2 ->
-    sem2_ty rs t (lookup_var v vls1) (lookup_var v vls2).
+    sem2_ty rs (lookup_list vs v) (lookup_var v vls1) (lookup_var v vls2).
 Proof.
   induction vs; [ contradiction | ].
-  destruct v.
-  - destruct vls1, vls2; cbn in *.
-    destruct e; cbn.
-    intros []; auto.
-  - destruct vls1, vls2; cbn in *.
-    intros []; auto.
+  destruct vls1, vls2, v; cbn; intros []; auto.
+Qed.
+
+Definition param_cn {n : nat}
+  (ts1 ts2 : vec Type n)
+  (rs : rvec ts1 ts2)
+  (t : ty n)
+  (c : cn t)
+  : sem2_ty rs t (sem_cn ts1 c) (sem_cn ts2 c).
+Proof.
+  destruct c; simpl; auto; intros.
+  - apply H.
+  - apply H.
+  - do 2 destruct (_ : _ + _); contradiction + auto.
 Qed.
 
 (* Main theorem! Every term satisfies the logical relation of its type. *)
@@ -418,4 +541,7 @@ Proof.
 
   - (* Var v *)
     apply param_var; auto.
+
+  - (* Con c *)
+    apply param_cn.
 Qed.
