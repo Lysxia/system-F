@@ -45,6 +45,13 @@ Definition iso_sum {A A' B B'}
          end
     |}.
 
+Definition iso_eq {A A'}
+  : A = A' -> iso A A' :=
+  fun e =>
+  match e with
+  | eq_refl => iso_id
+  end.
+
 (** ** Generic collections *)
 
 (** Bounded nats *)
@@ -139,8 +146,10 @@ Arguments lookup_lilist : simpl never.
 Definition rel_list {n : nat} : lilist Type n -> lilist Type n -> Type :=
   ziphlist (fun a b => a -> b -> Prop).
 
-(** ** Shifts *)
+(** ** Insertion *)
 
+(** "Insert" a number in the range [[0 .. n-1]] into the range [[0 .. n]],
+    by sending [[0 .. m-1]] to itself, and [[m .. n-1]] to [[m+1 .. n]]. *)
 Fixpoint insert_bnat (m : nat) {n : nat} : bnat n -> bnat (S n) :=
   match n with
   | O => fun v => match v with end
@@ -155,6 +164,7 @@ Fixpoint insert_bnat (m : nat) {n : nat} : bnat n -> bnat (S n) :=
     end
   end.
 
+(** Insert an element at position [n]. *)
 Fixpoint insert_lilist {A} (m : nat) (t0 : A) {n : nat}
   : lilist A n -> lilist A (S n) :=
   match m with
@@ -166,22 +176,27 @@ Fixpoint insert_lilist {A} (m : nat) (t0 : A) {n : nat}
     end
   end.
 
-(* TODO: replace iso with eq *)
-Fixpoint iso_insert_lookup_lilist (m : nat) (t0 : Type) {n : nat}
+Fixpoint eq_insert_lookup_lilist (m : nat) (t0 : Type) {n : nat}
   : forall {ts : lilist Type n} (tv : bnat n),
-      iso (lookup_lilist tv ts) (lookup_lilist (insert_bnat m tv) (insert_lilist m t0 ts)) :=
+        lookup_lilist tv ts
+      = lookup_lilist (insert_bnat m tv) (insert_lilist m t0 ts) :=
   match n with
   | O => fun ts tv => match tv with end
   | S n => fun ts tv =>
     match m with
-    | O => iso_id
+    | O => eq_refl
     | S m =>
       match tv with
-      | None => iso_id
-      | Some tv => iso_insert_lookup_lilist m t0 tv
+      | None => eq_refl
+      | Some tv => eq_insert_lookup_lilist m t0 tv
       end
     end
   end.
+
+Definition iso_insert_lookup_lilist (m : nat) (t0 : Type) {n : nat}
+  : forall {ts : lilist Type n} (tv : bnat n),
+      iso (lookup_lilist tv ts) (lookup_lilist (insert_bnat m tv) (insert_lilist m t0 ts)) :=
+  fun ts tv => iso_eq (eq_insert_lookup_lilist m t0 tv).
 
 Fixpoint insert_lookup_rel_list (m : nat) {n : nat}
   {t01 t02 : Type} (r0 : t01 -> t02 -> Prop)
@@ -290,50 +305,50 @@ Infix "@@" := App (at level 40) : tm_scope.
 (** ** Semantics *)
 
 (** Semantics of types as Coq types *)
-Fixpoint sem_ty {n : nat} (ts : lilist Type n) (t : ty n)
+Fixpoint eval_ty {n : nat} (ts : lilist Type n) (t : ty n)
   : Type :=
   match t with
-  | Arrow t1 t2 => sem_ty ts t1 -> sem_ty ts t2
-  | Forall t => forall (t0 : Type), @sem_ty (S n) (t0, ts) t
+  | Arrow t1 t2 => eval_ty ts t1 -> eval_ty ts t2
+  | Forall t => forall (t0 : Type), @eval_ty (S n) (t0, ts) t
   | Tyvar tv => lookup_lilist tv ts
   | Unit => unit
-  | Prod t1 t2 => sem_ty ts t1 * sem_ty ts t2
-  | Sum t1 t2 => sem_ty ts t1 + sem_ty ts t2
+  | Prod t1 t2 => eval_ty ts t1 * eval_ty ts t2
+  | Sum t1 t2 => eval_ty ts t1 + eval_ty ts t2
   end.
 
-Fixpoint shift_sem (m : nat) {n : nat} {ts : lilist Type n} (t0 : Type) (t : ty n)
-  : iso (sem_ty ts t) (@sem_ty (S n) (insert_lilist m t0 ts) (shift_ty m t)) :=
+Fixpoint shift_eval (m : nat) {n : nat} {ts : lilist Type n} (t0 : Type) (t : ty n)
+  : iso (eval_ty ts t) (@eval_ty (S n) (insert_lilist m t0 ts) (shift_ty m t)) :=
   match t with
   | Arrow t1 t2 =>
-      let i1 := shift_sem m t0 t1 in
-      let i2 := shift_sem m t0 t2 in
+      let i1 := shift_eval m t0 t1 in
+      let i2 := shift_eval m t0 t2 in
       {| iso_from := fun f x1 => iso_from i2 (f (iso_to i1 x1))
        ; iso_to := fun f x0 => iso_to i2 (f (iso_from i1 x0))
       |}
   | Forall t =>
-      {| iso_from := fun (f : forall a : Type, @sem_ty (S n) (a, ts) t) a =>
-           let i := @shift_sem (S m) (S n) (a, ts) t0 t in
+      {| iso_from := fun (f : forall a : Type, @eval_ty (S n) (a, ts) t) a =>
+           let i := @shift_eval (S m) (S n) (a, ts) t0 t in
            iso_from i (f a)
-       ; iso_to := fun (f : forall a : Type, @sem_ty (S (S n)) (a, _) (shift_ty (S m) t)) a =>
-           let i := @shift_sem (S m) (S n) (a, _) t0 t in
+       ; iso_to := fun (f : forall a : Type, @eval_ty (S (S n)) (a, _) (shift_ty (S m) t)) a =>
+           let i := @shift_eval (S m) (S n) (a, _) t0 t in
            iso_to i (f a)
-      |} : iso (forall (a : Type), @sem_ty (S n) (a, ts) t) _
+      |} : iso (forall (a : Type), @eval_ty (S n) (a, ts) t) _
   | Tyvar tv => iso_insert_lookup_lilist m t0 tv
   | Unit => iso_id
-  | Prod t1 t2 => iso_prod (shift_sem m t0 t1) (shift_sem m t0 t2)
-  | Sum t1 t2 => iso_sum (shift_sem m t0 t1) (shift_sem m t0 t2)
+  | Prod t1 t2 => iso_prod (shift_eval m t0 t1) (shift_eval m t0 t2)
+  | Sum t1 t2 => iso_sum (shift_eval m t0 t1) (shift_eval m t0 t2)
   end.
 
 Fixpoint shift_hlist {n : nat} {ts : lilist Type n} {vs : list (ty n)} (t0 : Type)
-  : hlist (sem_ty ts) vs -> hlist (@sem_ty (S n) (t0, ts)) (map (shift_ty 0) vs) :=
+  : hlist (eval_ty ts) vs -> hlist (@eval_ty (S n) (t0, ts)) (map (shift_ty 0) vs) :=
   match vs with
   | [] => fun _ => tt
   | t :: vs => fun ts =>
-    (iso_from (shift_sem 0 t0 _) (fst ts), shift_hlist t0 (snd ts))
+    (iso_from (shift_eval 0 t0 _) (fst ts), shift_hlist t0 (snd ts))
   end.
 
-Definition sem_cn {n : nat} (ts : lilist Type n) {t : ty n} (c : cn t)
-  : sem_ty ts t :=
+Definition eval_cn {n : nat} (ts : lilist Type n) {t : ty n} (c : cn t)
+  : eval_ty ts t :=
   match c with
   | One => tt
   | Pair => @pair
@@ -349,61 +364,59 @@ Definition sem_cn {n : nat} (ts : lilist Type n) {t : ty n} (c : cn t)
   end.
 
 (** Semantics of terms as Coq values *)
-Fixpoint sem_tm
+Fixpoint eval_tm
   {n : nat} (ts : lilist Type n)
-  {vs : list (ty n)} (vls : hlist (sem_ty ts) vs)
+  {vs : list (ty n)} (vls : hlist (eval_ty ts) vs)
   {t : ty n} (u : tm n vs t)
-  : sem_ty ts t :=
+  : eval_ty ts t :=
   match u with
-  | TAbs u => fun t0 => @sem_tm (S n) (t0, ts) _ (shift_hlist t0 vls) _ u
-  | Abs u => fun x => @sem_tm _ ts (_ :: vs) (x, vls) _ u
-  | App u1 u2 => (sem_tm ts vls u1) (sem_tm ts vls u2)
+  | TAbs u => fun t0 => @eval_tm (S n) (t0, ts) _ (shift_hlist t0 vls) _ u
+  | Abs u => fun x => @eval_tm _ ts (_ :: vs) (x, vls) _ u
+  | App u1 u2 => (eval_tm ts vls u1) (eval_tm ts vls u2)
   | Var v => lookup_hlist v vls
-  | Con c => sem_cn _ c
+  | Con c => eval_cn _ c
   end.
 
 (** Relational semantics of types *)
-Fixpoint sem2_ty {n : nat}
+Fixpoint eval2_ty {n : nat}
   {ts1 ts2 : lilist Type n}
   (rs : rel_list ts1 ts2)
   (t : ty n)
-  : sem_ty ts1 t -> sem_ty ts2 t -> Prop :=
+  : eval_ty ts1 t -> eval_ty ts2 t -> Prop :=
   match t with
   | Arrow t1 t2 => fun f1 f2 =>
-      forall x1 x2, sem2_ty rs t1 x1 x2 -> sem2_ty rs t2 (f1 x1) (f2 x2)
+      forall x1 x2, eval2_ty rs t1 x1 x2 -> eval2_ty rs t2 (f1 x1) (f2 x2)
   | Forall t => fun f1 f2 =>
       forall (t01 t02 : Type) (r0 : t01 -> t02 -> Prop),
-        @sem2_ty (S n) (t01, ts1) (t02, ts2) (r0, rs) t (f1 t01) (f2 t02)
+        @eval2_ty (S n) (t01, ts1) (t02, ts2) (r0, rs) t (f1 t01) (f2 t02)
   | Tyvar tv => lookup_ziphlist tv rs
 
   | Unit => fun _ _ => True
   | Prod t1 t2 => fun x1 x2 =>
-      sem2_ty rs t1 (fst x1) (fst x2) /\
-      sem2_ty rs t2 (snd x1) (snd x2)
+      eval2_ty rs t1 (fst x1) (fst x2) /\
+      eval2_ty rs t2 (snd x1) (snd x2)
   | Sum t1 t2 => fun x1 x2 =>
       match x1, x2 with
-      | inl y1, inl y2 => sem2_ty rs t1 y1 y2
-      | inr z1, inr z2 => sem2_ty rs t2 z1 z2
+      | inl y1, inl y2 => eval2_ty rs t1 y1 y2
+      | inr z1, inr z2 => eval2_ty rs t2 z1 z2
       | _, _ => False
       end
   end.
 
 (** Relational semantics of contexts *)
-Fixpoint sem2_ctx {n : nat} {vs : list (ty n)}
+Fixpoint eval2_ctx {n : nat} {vs : list (ty n)}
   : forall
       {ts1 ts2 : lilist Type n} (rs : rel_list ts1 ts2)
-      (vls1 : hlist (sem_ty ts1) vs) (vls2 : hlist (sem_ty ts2) vs),
+      (vls1 : hlist (eval_ty ts1) vs) (vls2 : hlist (eval_ty ts2) vs),
         Prop :=
   match vs with
   | [] => fun _ _ _ _ _ => True
   | v :: vs => fun _ _ rs vls1 vls2 =>
-    sem2_ty rs v (fst vls1) (fst vls2) /\
-    sem2_ctx rs (snd vls1) (snd vls2)
+    eval2_ty rs v (fst vls1) (fst vls2) /\
+    eval2_ctx rs (snd vls1) (snd vls2)
   end.
 
 (** ** Parametricity theorem *)
-
-(** Shifts preserve relations *)
 
 (* TODO: generalize *)
 Lemma param_insert_bnat_from (m : nat)
@@ -447,16 +460,16 @@ Lemma param_shift (m : nat) {n : nat}
   (t : ty n)
   (t01 t02 : Type)
   (r0 : t01 -> t02 -> Prop)
-  : (forall (vl1 : sem_ty ts1 t) (vl2 : sem_ty ts2 t),
-       sem2_ty rs t vl1 vl2 ->
-       @sem2_ty (S n) _ _ (insert_lookup_rel_list m r0 rs) (shift_ty m t)
-         (iso_from (shift_sem m t01 _) vl1)
-         (iso_from (shift_sem m t02 _) vl2))
+  : (forall (vl1 : eval_ty ts1 t) (vl2 : eval_ty ts2 t),
+       eval2_ty rs t vl1 vl2 ->
+       @eval2_ty (S n) _ _ (insert_lookup_rel_list m r0 rs) (shift_ty m t)
+         (iso_from (shift_eval m t01 _) vl1)
+         (iso_from (shift_eval m t02 _) vl2))
   /\ (forall vl1' vl2',
-       sem2_ty (insert_lookup_rel_list m r0 rs) (shift_ty m t) vl1' vl2' ->
-       sem2_ty rs t
-         (iso_to (shift_sem m t01 _) vl1')
-         (iso_to (shift_sem m t02 _) vl2')).
+       eval2_ty (insert_lookup_rel_list m r0 rs) (shift_ty m t) vl1' vl2' ->
+       eval2_ty rs t
+         (iso_to (shift_eval m t01 _) vl1')
+         (iso_to (shift_eval m t02 _) vl2')).
 Proof.
   revert m.
   induction t; cbn; intros; auto.
@@ -475,11 +488,11 @@ Qed.
 Lemma param_tabs {n : nat}
   (ts1 ts2 : lilist Type n)
   (rs : rel_list ts1 ts2)
-  (vs : list (ty n)) (vls1 : hlist (sem_ty ts1) vs) (vls2 : hlist (sem_ty ts2) vs)
+  (vs : list (ty n)) (vls1 : hlist (eval_ty ts1) vs) (vls2 : hlist (eval_ty ts2) vs)
   (t01 t02 : Type)
   (r0 : t01 -> t02 -> Prop)
-  : sem2_ctx rs vls1 vls2 ->
-    @sem2_ctx (S n) _ (t01, ts1) (t02, ts2) (r0, rs)
+  : eval2_ctx rs vls1 vls2 ->
+    @eval2_ctx (S n) _ (t01, ts1) (t02, ts2) (r0, rs)
       (shift_hlist t01 vls1)
       (shift_hlist t02 vls2).
 Proof.
@@ -492,10 +505,10 @@ Qed.
 Lemma param_var {n : nat}
   (ts1 ts2 : lilist Type n)
   (rs : rel_list ts1 ts2)
-  (vs : list (ty n)) (vls1 : hlist (sem_ty ts1) vs) (vls2 : hlist (sem_ty ts2) vs)
+  (vs : list (ty n)) (vls1 : hlist (eval_ty ts1) vs) (vls2 : hlist (eval_ty ts2) vs)
   (v : bnat (length vs))
-  : sem2_ctx rs vls1 vls2 ->
-    sem2_ty rs (lookup_list vs v) (lookup_hlist v vls1) (lookup_hlist v vls2).
+  : eval2_ctx rs vls1 vls2 ->
+    eval2_ty rs (lookup_list vs v) (lookup_hlist v vls1) (lookup_hlist v vls2).
 Proof.
   induction vs; [ contradiction | ].
   destruct vls1, vls2, v; cbn; intros []; auto.
@@ -506,7 +519,7 @@ Definition param_cn {n : nat}
   (rs : rel_list ts1 ts2)
   (t : ty n)
   (c : cn t)
-  : sem2_ty rs t (sem_cn ts1 c) (sem_cn ts2 c).
+  : eval2_ty rs t (eval_cn ts1 c) (eval_cn ts2 c).
 Proof.
   destruct c; simpl; auto; intros.
   - apply H.
@@ -518,10 +531,10 @@ Qed.
 Definition parametricity {n : nat}
   (ts1 ts2 : lilist Type n)
   (rs : rel_list ts1 ts2)
-  (vs : list (ty n)) (vls1 : hlist (sem_ty ts1) vs) (vls2 : hlist (sem_ty ts2) vs)
+  (vs : list (ty n)) (vls1 : hlist (eval_ty ts1) vs) (vls2 : hlist (eval_ty ts2) vs)
   (t : ty n)
   (u : tm n vs t)
-  : sem2_ctx rs vls1 vls2 -> sem2_ty rs t (sem_tm ts1 vls1 u) (sem_tm ts2 vls2 u).
+  : eval2_ctx rs vls1 vls2 -> eval2_ty rs t (eval_tm ts1 vls1 u) (eval_tm ts2 vls2 u).
 Proof.
   induction u; cbn; intros; auto.
   - (* TAbs u *)
