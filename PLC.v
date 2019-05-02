@@ -47,55 +47,60 @@ Definition iso_sum {A A' B B'}
 
 (** ** Generic collections *)
 
-(** Length-indexed lists *)
-Fixpoint vec (A : Type) (n : nat)
+(** Bounded nats *)
+Fixpoint bnat (n : nat) : Type :=
+  match n with
+  | O => Empty_set
+  | S n => option (bnat n)
+  end.
+
+Definition N0 {n : nat} : bnat (S n) := None.
+Definition NS {n : nat} : bnat n -> bnat (S n) := Some.
+
+Notation N1 := (NS N0).
+Notation N2 := (NS N1).
+Notation N3 := (NS N2).
+
+(** Length-indexed lists (aka "vectors") *)
+Fixpoint lilist (A : Type) (n : nat)
   : Type :=
   match n with
   | O => unit
-  | S n => A * vec A n
+  | S n => A * lilist A n
   end.
 
-(** Bounded indices *)
-Fixpoint tyvar (n : nat) : Type :=
-  match n with
-  | O => Empty_set
-  | S n => option (tyvar n)
-  end.
-
-Definition N0 {n : nat} : tyvar (S n) := None.
-Definition NS {n : nat} : tyvar n -> tyvar (S n) := Some.
-
-(** Heterogeneous lists (list-indexed lists) *)
-Fixpoint dvec {A : Type} (f : A -> Type) (xs : list A)
+(** Heterogeneous lists (type-indexed lists)
+    This could also be defined with [lilist]. *)
+Fixpoint hlist {A : Type} (f : A -> Type) (xs : list A)
   : Type :=
   match xs with
   | [] => unit
-  | x :: xs => f x * dvec f xs
+  | x :: xs => f x * hlist f xs
   end.
 
 (** Heterogeneous lists indexed by two lists. *)
-Fixpoint zipvec {A B : Type} {n : nat} (f : A -> B -> Type)
-  : vec A n -> vec B n -> Type :=
+Fixpoint ziphlist {A B : Type} {n : nat} (f : A -> B -> Type)
+  : lilist A n -> lilist B n -> Type :=
   match n with
   | O => fun _ _ => unit
   | S n => fun ts1 ts2 =>
-      (f (fst ts1) (fst ts2) * zipvec f (snd ts1) (snd ts2))%type
+      (f (fst ts1) (fst ts2) * ziphlist f (snd ts1) (snd ts2))%type
   end.
 
 (** ** Bounded lookup *)
 
-Fixpoint lookup_tyvar {A : Type} {n : nat}
-  : tyvar n -> vec A n -> A :=
+Fixpoint lookup_lilist {A : Type} {n : nat}
+  : bnat n -> lilist A n -> A :=
   match n with
   | O => fun y => match y with end
   | S n => fun tv ts =>
     match tv with
     | None => fst ts
-    | Some tv => lookup_tyvar tv (snd ts)
+    | Some tv => lookup_lilist tv (snd ts)
     end
   end.
 
-Fixpoint lookup_list {A : Type} (xs : list A) : tyvar (length xs) -> A :=
+Fixpoint lookup_list {A : Type} (xs : list A) : bnat (length xs) -> A :=
   match xs with
   | [] => fun v => match v with end
   | x :: xs => fun v =>
@@ -105,39 +110,38 @@ Fixpoint lookup_list {A : Type} (xs : list A) : tyvar (length xs) -> A :=
     end
   end.
 
-Fixpoint lookup_var {A} {f : A -> Type} {vs : list A}
-  : forall v : tyvar (length vs), dvec f vs -> f (lookup_list vs v) :=
+Fixpoint lookup_hlist {A} {f : A -> Type} {vs : list A}
+  : forall v : bnat (length vs), hlist f vs -> f (lookup_list vs v) :=
   match vs with
   | [] => fun v => match v with end
   | t :: vs => fun v vls =>
     match v with
     | None => fst vls
-    | Some v => lookup_var v (snd vls)
+    | Some v => lookup_hlist v (snd vls)
     end
   end.
 
-(** Bounded lookup *)
-Fixpoint lookup_tyvar_zipvec {A B} {f : A -> B -> Type} {n : nat}
-  : forall {ts1 : vec A n} {ts2 : vec B n} (tv : tyvar n),
-      zipvec f ts1 ts2 -> f (lookup_tyvar tv ts1) (lookup_tyvar tv ts2) :=
+Fixpoint lookup_ziphlist {A B} {f : A -> B -> Type} {n : nat}
+  : forall {ts1 : lilist A n} {ts2 : lilist B n} (tv : bnat n),
+      ziphlist f ts1 ts2 -> f (lookup_lilist tv ts1) (lookup_lilist tv ts2) :=
   match n with
   | O => fun _ _ tv => match tv with end
   | S n => fun ts1 ts2 tv rs =>
       match tv with
       | None => fst rs
-      | Some tv => lookup_tyvar_zipvec tv (snd rs)
+      | Some tv => lookup_ziphlist tv (snd rs)
       end
   end.
 
-Arguments lookup_tyvar_zipvec : simpl never.
-Arguments lookup_tyvar : simpl never.
+Arguments lookup_ziphlist : simpl never.
+Arguments lookup_lilist : simpl never.
 
-Definition rvec {n : nat} : vec Type n -> vec Type n -> Type :=
-  zipvec (fun a b => a -> b -> Prop).
+Definition rel_list {n : nat} : lilist Type n -> lilist Type n -> Type :=
+  ziphlist (fun a b => a -> b -> Prop).
 
 (** ** Shifts *)
 
-Fixpoint shift_tyvar (m : nat) {n : nat} : tyvar n -> tyvar (S n) :=
+Fixpoint insert_bnat (m : nat) {n : nat} : bnat n -> bnat (S n) :=
   match n with
   | O => fun v => match v with end
   | S n => fun v =>
@@ -146,25 +150,26 @@ Fixpoint shift_tyvar (m : nat) {n : nat} : tyvar n -> tyvar (S n) :=
     | S m =>
       match v with
       | None => None
-      | Some v => Some (shift_tyvar m v)
+      | Some v => Some (insert_bnat m v)
       end
     end
   end.
 
-Fixpoint shift_vec {A} (m : nat) (t0 : A) {n : nat}
-  : vec A n -> vec A (S n) :=
+Fixpoint insert_lilist {A} (m : nat) (t0 : A) {n : nat}
+  : lilist A n -> lilist A (S n) :=
   match m with
   | O => fun ts => (t0, ts)
   | S m =>
     match n with
     | O => fun _ => (t0, tt)
-    | S n => fun ts => (fst ts, shift_vec m t0 (snd ts))
+    | S n => fun ts => (fst ts, insert_lilist m t0 (snd ts))
     end
   end.
 
-Fixpoint shift_sem_var (m : nat) (t0 : Type) {n : nat}
-  : forall {ts : vec Type n} (tv : tyvar n),
-      iso (lookup_tyvar tv ts) (lookup_tyvar (shift_tyvar m tv) (shift_vec m t0 ts)) :=
+(* TODO: replace iso with eq *)
+Fixpoint iso_insert_lookup_lilist (m : nat) (t0 : Type) {n : nat}
+  : forall {ts : lilist Type n} (tv : bnat n),
+      iso (lookup_lilist tv ts) (lookup_lilist (insert_bnat m tv) (insert_lilist m t0 ts)) :=
   match n with
   | O => fun ts tv => match tv with end
   | S n => fun ts tv =>
@@ -173,40 +178,23 @@ Fixpoint shift_sem_var (m : nat) (t0 : Type) {n : nat}
     | S m =>
       match tv with
       | None => iso_id
-      | Some tv => shift_sem_var m t0 tv
+      | Some tv => iso_insert_lookup_lilist m t0 tv
       end
     end
   end.
 
-Fixpoint shift_rvec (m : nat) {n : nat}
+Fixpoint insert_lookup_rel_list (m : nat) {n : nat}
   {t01 t02 : Type} (r0 : t01 -> t02 -> Prop)
-  : forall {ts01 ts02 : vec Type n},
-      rvec ts01 ts02 -> rvec (shift_vec m t01 ts01) (shift_vec m t02 ts02) :=
+  : forall {ts01 ts02 : lilist Type n},
+      rel_list ts01 ts02 -> rel_list (insert_lilist m t01 ts01) (insert_lilist m t02 ts02) :=
   match m with
   | O => fun _ _ rs => (r0, rs)
   | S m =>
     match n with
     | O => fun _ _ rs => (r0, rs)
-    | S n => fun _ _ rs => (fst rs, shift_rvec m r0 (snd rs))
+    | S n => fun _ _ rs => (fst rs, insert_lookup_rel_list m r0 (snd rs))
     end
   end.
-
-(** Length-indexed lists as an [Inductive] type *)
-Inductive vec' (A : Type) : nat -> Type :=
-| nil_vec : vec' A 0
-| cons_vec {n} : A -> vec' A n -> vec' A (S n)
-.
-
-Arguments nil_vec {A}.
-Arguments cons_vec {A n}.
-
-Definition map_vec' {A B : Type} (f : A -> B)
-  : forall {n : nat}, vec' A n -> vec' B n :=
-  fix _map _ xs :=
-    match xs with
-    | nil_vec => nil_vec
-    | cons_vec x xs => cons_vec (f x) (_map _ xs)
-    end.
 
 (** * Polymorphic lambda calculus *)
 
@@ -217,7 +205,7 @@ Definition map_vec' {A B : Type} (f : A -> B)
 Inductive ty (n : nat) : Type :=
 | Arrow : ty n -> ty n -> ty n
 | Forall : ty (S n) -> ty n
-| Tyvar : tyvar n -> ty n
+| Tyvar : bnat n -> ty n
 
 (* Basic data types *)
 | Unit : ty n
@@ -233,21 +221,24 @@ Arguments Unit {n}.
 Arguments Prod {n}.
 Arguments Sum  {n}.
 
+(** **** Notations *)
+
 Delimit Scope ty_scope with ty.
 Bind Scope ty_scope with ty.
 
 Infix "->" := Arrow : ty_scope.
-Coercion Tyvar : tyvar >-> ty.
+Coercion Tyvar : bnat >-> ty.
 
-Definition V0 {n} : tyvar (S n) := N0.
-Definition V1 {n} : tyvar (S (S n)) := NS N0.
-Definition V2 {n} : tyvar (S (S (S n))) := NS (NS N0).
+Definition V0 {n} : bnat (S n) := N0.
+Definition V1 {n} : bnat (S (S n)) := NS N0.
+Definition V2 {n} : bnat (S (S (S n))) := NS (NS N0).
 
+(** Shift *)
 Fixpoint shift_ty (m : nat) {n : nat} (t : ty n) : ty (S n) :=
   match t with
   | Arrow t1 t2 => Arrow (shift_ty m t1) (shift_ty m t2)
   | Forall t => Forall (shift_ty (S m) t)
-  | Tyvar v => @Tyvar (S n) (shift_tyvar m v)
+  | Tyvar v => @Tyvar (S n) (insert_bnat m v)
   | Unit => Unit
   | Prod t1 t2 => Prod (shift_ty m t1) (shift_ty m t2)
   | Sum t1 t2 => Sum (shift_ty m t1) (shift_ty m t2)
@@ -281,7 +272,7 @@ Inductive tm (n : nat) (vs : list (ty n)) : ty n -> Type :=
 | TAbs {t} : tm (S n) (map (shift_ty 0) vs) t -> tm n vs (Forall t)
 | Abs {t1 t2} : tm n (t1 :: vs) t2 -> tm n vs (Arrow t1 t2)
 | App {t1 t2} : tm n vs (Arrow t1 t2) -> tm n vs t1 -> tm n vs t2
-| Var (v : tyvar (length vs)) : tm n vs (lookup_list vs v)
+| Var (v : bnat (length vs)) : tm n vs (lookup_list vs v)
 | Con {t} : cn t -> tm n vs t
 .
 
@@ -291,22 +282,27 @@ Arguments App  {n vs t1 t2}.
 Arguments Var  {n vs}.
 Arguments Con  {n vs t}.
 
+Delimit Scope tm_scope with tm.
+Bind Scope tm_scope with tm.
+
+Infix "@@" := App (at level 40) : tm_scope.
+
 (** ** Semantics *)
 
 (** Semantics of types as Coq types *)
-Fixpoint sem_ty {n : nat} (ts : vec Type n) (t : ty n)
+Fixpoint sem_ty {n : nat} (ts : lilist Type n) (t : ty n)
   : Type :=
   match t with
   | Arrow t1 t2 => sem_ty ts t1 -> sem_ty ts t2
   | Forall t => forall (t0 : Type), @sem_ty (S n) (t0, ts) t
-  | Tyvar tv => lookup_tyvar tv ts
+  | Tyvar tv => lookup_lilist tv ts
   | Unit => unit
   | Prod t1 t2 => sem_ty ts t1 * sem_ty ts t2
   | Sum t1 t2 => sem_ty ts t1 + sem_ty ts t2
   end.
 
-Fixpoint shift_sem (m : nat) {n : nat} {ts : vec Type n} (t0 : Type) (t : ty n)
-  : iso (sem_ty ts t) (@sem_ty (S n) (shift_vec m t0 ts) (shift_ty m t)) :=
+Fixpoint shift_sem (m : nat) {n : nat} {ts : lilist Type n} (t0 : Type) (t : ty n)
+  : iso (sem_ty ts t) (@sem_ty (S n) (insert_lilist m t0 ts) (shift_ty m t)) :=
   match t with
   | Arrow t1 t2 =>
       let i1 := shift_sem m t0 t1 in
@@ -322,21 +318,21 @@ Fixpoint shift_sem (m : nat) {n : nat} {ts : vec Type n} (t0 : Type) (t : ty n)
            let i := @shift_sem (S m) (S n) (a, _) t0 t in
            iso_to i (f a)
       |} : iso (forall (a : Type), @sem_ty (S n) (a, ts) t) _
-  | Tyvar tv => shift_sem_var m t0 tv
+  | Tyvar tv => iso_insert_lookup_lilist m t0 tv
   | Unit => iso_id
   | Prod t1 t2 => iso_prod (shift_sem m t0 t1) (shift_sem m t0 t2)
   | Sum t1 t2 => iso_sum (shift_sem m t0 t1) (shift_sem m t0 t2)
   end.
 
-Fixpoint shift_dvec {n : nat} {ts : vec Type n} {vs : list (ty n)} (t0 : Type)
-  : dvec (sem_ty ts) vs -> dvec (@sem_ty (S n) (t0, ts)) (map (shift_ty 0) vs) :=
+Fixpoint shift_hlist {n : nat} {ts : lilist Type n} {vs : list (ty n)} (t0 : Type)
+  : hlist (sem_ty ts) vs -> hlist (@sem_ty (S n) (t0, ts)) (map (shift_ty 0) vs) :=
   match vs with
   | [] => fun _ => tt
   | t :: vs => fun ts =>
-    (iso_from (shift_sem 0 t0 _) (fst ts), shift_dvec t0 (snd ts))
+    (iso_from (shift_sem 0 t0 _) (fst ts), shift_hlist t0 (snd ts))
   end.
 
-Definition sem_cn {n : nat} (ts : vec Type n) {t : ty n} (c : cn t)
+Definition sem_cn {n : nat} (ts : lilist Type n) {t : ty n} (c : cn t)
   : sem_ty ts t :=
   match c with
   | One => tt
@@ -354,22 +350,22 @@ Definition sem_cn {n : nat} (ts : vec Type n) {t : ty n} (c : cn t)
 
 (** Semantics of terms as Coq values *)
 Fixpoint sem_tm
-  {n : nat} (ts : vec Type n)
-  {vs : list (ty n)} (vls : dvec (sem_ty ts) vs)
+  {n : nat} (ts : lilist Type n)
+  {vs : list (ty n)} (vls : hlist (sem_ty ts) vs)
   {t : ty n} (u : tm n vs t)
   : sem_ty ts t :=
   match u with
-  | TAbs u => fun t0 => @sem_tm (S n) (t0, ts) _ (shift_dvec t0 vls) _ u
+  | TAbs u => fun t0 => @sem_tm (S n) (t0, ts) _ (shift_hlist t0 vls) _ u
   | Abs u => fun x => @sem_tm _ ts (_ :: vs) (x, vls) _ u
   | App u1 u2 => (sem_tm ts vls u1) (sem_tm ts vls u2)
-  | Var v => lookup_var v vls
+  | Var v => lookup_hlist v vls
   | Con c => sem_cn _ c
   end.
 
 (** Relational semantics of types *)
 Fixpoint sem2_ty {n : nat}
-  {ts1 ts2 : vec Type n}
-  (rs : rvec ts1 ts2)
+  {ts1 ts2 : lilist Type n}
+  (rs : rel_list ts1 ts2)
   (t : ty n)
   : sem_ty ts1 t -> sem_ty ts2 t -> Prop :=
   match t with
@@ -378,7 +374,7 @@ Fixpoint sem2_ty {n : nat}
   | Forall t => fun f1 f2 =>
       forall (t01 t02 : Type) (r0 : t01 -> t02 -> Prop),
         @sem2_ty (S n) (t01, ts1) (t02, ts2) (r0, rs) t (f1 t01) (f2 t02)
-  | Tyvar tv => lookup_tyvar_zipvec tv rs
+  | Tyvar tv => lookup_ziphlist tv rs
 
   | Unit => fun _ _ => True
   | Prod t1 t2 => fun x1 x2 =>
@@ -395,8 +391,8 @@ Fixpoint sem2_ty {n : nat}
 (** Relational semantics of contexts *)
 Fixpoint sem2_ctx {n : nat} {vs : list (ty n)}
   : forall
-      {ts1 ts2 : vec Type n} (rs : rvec ts1 ts2)
-      (vls1 : dvec (sem_ty ts1) vs) (vls2 : dvec (sem_ty ts2) vs),
+      {ts1 ts2 : lilist Type n} (rs : rel_list ts1 ts2)
+      (vls1 : hlist (sem_ty ts1) vs) (vls2 : hlist (sem_ty ts2) vs),
         Prop :=
   match vs with
   | [] => fun _ _ _ _ _ => True
@@ -409,35 +405,36 @@ Fixpoint sem2_ctx {n : nat} {vs : list (ty n)}
 
 (** Shifts preserve relations *)
 
-Lemma param_shift_tyvar_from (m : nat)
+(* TODO: generalize *)
+Lemma param_insert_bnat_from (m : nat)
   : forall {n : nat}
-      (ts1 ts2 : vec Type n)
-      (rs : rvec ts1 ts2)
-      (v : tyvar n)
+      (ts1 ts2 : lilist Type n)
+      (rs : rel_list ts1 ts2)
+      (v : bnat n)
       (t01 t02 : Type) (r0 : t01 -> t02 -> Prop)
-      (vl1 : lookup_tyvar v ts1) (vl2 : lookup_tyvar v ts2)
-      , lookup_tyvar_zipvec v rs vl1 vl2 ->
-        lookup_tyvar_zipvec (shift_tyvar m v) (shift_rvec m r0 rs)
-          (iso_from (shift_sem_var m t01 v) vl1)
-          (iso_from (shift_sem_var m t02 v) vl2).
+      (vl1 : lookup_lilist v ts1) (vl2 : lookup_lilist v ts2)
+      , lookup_ziphlist v rs vl1 vl2 ->
+        lookup_ziphlist (insert_bnat m v) (insert_lookup_rel_list m r0 rs)
+          (iso_from (iso_insert_lookup_lilist m t01 v) vl1)
+          (iso_from (iso_insert_lookup_lilist m t02 v) vl2).
 Proof.
   induction m; intros; cbn; (destruct n; [ destruct v |]); auto.
   destruct v; cbn; auto.
   apply IHm. auto.
 Qed.
 
-Lemma param_shift_tyvar_to (m : nat)
+Lemma param_insert_bnat_to (m : nat)
   : forall {n : nat}
-      (ts1 ts2 : vec Type n)
-      (rs : rvec ts1 ts2)
-      (v : tyvar n)
+      (ts1 ts2 : lilist Type n)
+      (rs : rel_list ts1 ts2)
+      (v : bnat n)
       (t01 t02 : Type) (r0 : t01 -> t02 -> Prop)
-      (vl1' : lookup_tyvar (shift_tyvar m v) (shift_vec m t01 ts1))
-      (vl2' : lookup_tyvar (shift_tyvar m v) (shift_vec m t02 ts2))
-      , lookup_tyvar_zipvec (shift_tyvar m v) (shift_rvec m r0 rs) vl1' vl2'->
-        lookup_tyvar_zipvec v rs
-          (iso_to (shift_sem_var m t01 v) vl1')
-          (iso_to (shift_sem_var m t02 v) vl2').
+      (vl1' : lookup_lilist (insert_bnat m v) (insert_lilist m t01 ts1))
+      (vl2' : lookup_lilist (insert_bnat m v) (insert_lilist m t02 ts2))
+      , lookup_ziphlist (insert_bnat m v) (insert_lookup_rel_list m r0 rs) vl1' vl2'->
+        lookup_ziphlist v rs
+          (iso_to (iso_insert_lookup_lilist m t01 v) vl1')
+          (iso_to (iso_insert_lookup_lilist m t02 v) vl2').
 Proof.
   induction m; intros; cbn; (destruct n; [ destruct v |]); auto.
   destruct v; cbn in *; auto.
@@ -445,18 +442,18 @@ Proof.
 Qed.
 
 Lemma param_shift (m : nat) {n : nat}
-  (ts1 ts2 : vec Type n)
-  (rs : rvec ts1 ts2)
+  (ts1 ts2 : lilist Type n)
+  (rs : rel_list ts1 ts2)
   (t : ty n)
   (t01 t02 : Type)
   (r0 : t01 -> t02 -> Prop)
   : (forall (vl1 : sem_ty ts1 t) (vl2 : sem_ty ts2 t),
        sem2_ty rs t vl1 vl2 ->
-       @sem2_ty (S n) _ _ (shift_rvec m r0 rs) (shift_ty m t)
+       @sem2_ty (S n) _ _ (insert_lookup_rel_list m r0 rs) (shift_ty m t)
          (iso_from (shift_sem m t01 _) vl1)
          (iso_from (shift_sem m t02 _) vl2))
   /\ (forall vl1' vl2',
-       sem2_ty (shift_rvec m r0 rs) (shift_ty m t) vl1' vl2' ->
+       sem2_ty (insert_lookup_rel_list m r0 rs) (shift_ty m t) vl1' vl2' ->
        sem2_ty rs t
          (iso_to (shift_sem m t01 _) vl1')
          (iso_to (shift_sem m t02 _) vl2')).
@@ -468,23 +465,23 @@ Proof.
       eapply (IHt (_, ts1) (_, ts2) (r1, rs) (S m));
       eauto.
   - split; intros.
-    + auto using param_shift_tyvar_from.
-    + eauto using param_shift_tyvar_to.
+    + auto using param_insert_bnat_from.
+    + eauto using param_insert_bnat_to.
   - split; intros; destruct H; split; apply IHt1 + apply IHt2; auto.
   - split; intros; destruct (_ : _ + _), (_ : _ + _);
       contradiction + apply IHt1 + apply IHt2; auto.
 Qed.
 
 Lemma param_tabs {n : nat}
-  (ts1 ts2 : vec Type n)
-  (rs : rvec ts1 ts2)
-  (vs : list (ty n)) (vls1 : dvec (sem_ty ts1) vs) (vls2 : dvec (sem_ty ts2) vs)
+  (ts1 ts2 : lilist Type n)
+  (rs : rel_list ts1 ts2)
+  (vs : list (ty n)) (vls1 : hlist (sem_ty ts1) vs) (vls2 : hlist (sem_ty ts2) vs)
   (t01 t02 : Type)
   (r0 : t01 -> t02 -> Prop)
   : sem2_ctx rs vls1 vls2 ->
     @sem2_ctx (S n) _ (t01, ts1) (t02, ts2) (r0, rs)
-      (shift_dvec t01 vls1)
-      (shift_dvec t02 vls2).
+      (shift_hlist t01 vls1)
+      (shift_hlist t02 vls2).
 Proof.
   induction vs; auto.
   destruct vls1, vls2; cbn.
@@ -493,20 +490,20 @@ Proof.
 Qed.
 
 Lemma param_var {n : nat}
-  (ts1 ts2 : vec Type n)
-  (rs : rvec ts1 ts2)
-  (vs : list (ty n)) (vls1 : dvec (sem_ty ts1) vs) (vls2 : dvec (sem_ty ts2) vs)
-  (v : tyvar (length vs))
+  (ts1 ts2 : lilist Type n)
+  (rs : rel_list ts1 ts2)
+  (vs : list (ty n)) (vls1 : hlist (sem_ty ts1) vs) (vls2 : hlist (sem_ty ts2) vs)
+  (v : bnat (length vs))
   : sem2_ctx rs vls1 vls2 ->
-    sem2_ty rs (lookup_list vs v) (lookup_var v vls1) (lookup_var v vls2).
+    sem2_ty rs (lookup_list vs v) (lookup_hlist v vls1) (lookup_hlist v vls2).
 Proof.
   induction vs; [ contradiction | ].
   destruct vls1, vls2, v; cbn; intros []; auto.
 Qed.
 
 Definition param_cn {n : nat}
-  (ts1 ts2 : vec Type n)
-  (rs : rvec ts1 ts2)
+  (ts1 ts2 : lilist Type n)
+  (rs : rel_list ts1 ts2)
   (t : ty n)
   (c : cn t)
   : sem2_ty rs t (sem_cn ts1 c) (sem_cn ts2 c).
@@ -519,9 +516,9 @@ Qed.
 
 (* Main theorem! Every term satisfies the logical relation of its type. *)
 Definition parametricity {n : nat}
-  (ts1 ts2 : vec Type n)
-  (rs : rvec ts1 ts2)
-  (vs : list (ty n)) (vls1 : dvec (sem_ty ts1) vs) (vls2 : dvec (sem_ty ts2) vs)
+  (ts1 ts2 : lilist Type n)
+  (rs : rel_list ts1 ts2)
+  (vs : list (ty n)) (vls1 : hlist (sem_ty ts1) vs) (vls2 : hlist (sem_ty ts2) vs)
   (t : ty n)
   (u : tm n vs t)
   : sem2_ctx rs vls1 vls2 -> sem2_ty rs t (sem_tm ts1 vls1 u) (sem_tm ts2 vls2 u).
