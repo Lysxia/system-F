@@ -3,15 +3,6 @@ Import ListNotations.
 
 (** * Generic dependent data structures *)
 
-Variant void1 {T : Type} : T -> Type := .
-Variant sum1 {T : Type} (A B : T -> Type) (t : T) : Type :=
-| inl1 : A t -> sum1 A B t
-| inr1 : B t -> sum1 A B t
-.
-
-Arguments inl1 {T A B t} _.
-Arguments inr1 {T A B t} _.
-
 Record iso (A B : Type) : Type :=
   { iso_from : A -> B
   ; iso_to   : B -> A
