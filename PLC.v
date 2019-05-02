@@ -302,6 +302,9 @@ Bind Scope tm_scope with tm.
 
 Infix "@@" := App (at level 40) : tm_scope.
 
+(** Closed term *)
+Notation tm0 := (tm 0 []).
+
 (** ** Semantics *)
 
 (** Semantics of types as Coq types *)
@@ -315,6 +318,9 @@ Fixpoint eval_ty {n : nat} (ts : lilist Type n) (t : ty n)
   | Prod t1 t2 => eval_ty ts t1 * eval_ty ts t2
   | Sum t1 t2 => eval_ty ts t1 + eval_ty ts t2
   end.
+
+(** Semantics of types in the empty context. *)
+Definition eval_ty0 : ty 0 -> Type := @eval_ty 0 tt.
 
 Fixpoint shift_eval (m : nat) {n : nat} {ts : lilist Type n} (t0 : Type) (t : ty n)
   : iso (eval_ty ts t) (@eval_ty (S n) (insert_lilist m t0 ts) (shift_ty m t)) :=
@@ -377,6 +383,10 @@ Fixpoint eval_tm
   | Con c => eval_cn _ c
   end.
 
+(** Semantics of terms in the empty context *)
+Definition eval_tm0 {t : ty 0} : tm0 t -> eval_ty0 t :=
+  @eval_tm 0 tt [] tt t.
+
 (** Relational semantics of types *)
 Fixpoint eval2_ty {n : nat}
   {ts1 ts2 : lilist Type n}
@@ -402,6 +412,10 @@ Fixpoint eval2_ty {n : nat}
       | _, _ => False
       end
   end.
+
+(** Relational semantics in the empty context *)
+Definition eval2_ty0 (t : ty 0) : eval_ty0 t -> eval_ty0 t -> Prop :=
+  @eval2_ty 0 tt tt tt t.
 
 (** Relational semantics of contexts *)
 Fixpoint eval2_ctx {n : nat} {vs : list (ty n)}
@@ -528,7 +542,7 @@ Proof.
 Qed.
 
 (* Main theorem! Every term satisfies the logical relation of its type. *)
-Definition parametricity {n : nat}
+Definition parametricity (n : nat)
   (ts1 ts2 : lilist Type n)
   (rs : rel_list ts1 ts2)
   (vs : list (ty n)) (vls1 : hlist (eval_ty ts1) vs) (vls2 : hlist (eval_ty ts2) vs)
@@ -554,4 +568,30 @@ Proof.
 
   - (* Con c *)
     apply param_cn.
+Qed.
+
+(** Parametricity theorem in the empty context. *)
+Definition parametricity0 (t : ty 0) (u : tm0 t) : eval2_ty0 t (eval_tm0 u) (eval_tm0 u).
+Proof.
+  apply parametricity. constructor.
+Qed.
+
+(** * Examples *)
+
+(** Type of the polymorphic identity function *)
+Definition ID_ty {n} : ty n := (Forall (V0 -> V0)).
+
+Compute (eval_ty0 ID_ty).
+Compute (eval2_ty0 ID_ty).
+
+(** Any term [u] of the same type as the polymorphic identity behaves like the
+    identity function. Let [f] be the interpretation of [u] ([f := eval_tm0 u]),
+    then [f _ a = a].
+  *)
+Example parametric_ID (t : tm0 ID_ty) (A : Type) (a : A)
+  : (eval_tm0 t) A a = a.
+Proof.
+  pose proof (parametricity0 ID_ty t A A (fun x1 x2 => x1 = a)).
+  unfold lookup_ziphlist in H; simpl in H.
+  apply (H a a); auto.
 Qed.
