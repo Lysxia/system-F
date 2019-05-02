@@ -1,7 +1,34 @@
+(** The polymorphic lambda calculus, a.k.a. System F *)
+
+(** * Description *)
+
+(** The main elements of this file are:
+
+  - Syntax: types [ty] and terms [tm], with typed DeBruijn indices.
+  - Denotational semantics:
+      - [eval_ty]: types evaluated as Coq types;
+      - [eval_tm]: terms evaluated as Coq values;
+      - [eval2_ty]: types evaluated/interpreted as (Coq) relations between term
+        values/denotations.
+  - Parametricity theorem, [parametricity]: all terms satisfy the relational
+    interpretation of their type.
+
+  Example application:
+  - [parametric_ID]: the polymorphic identity function is the only function of
+    its type.
+  *)
+
+(* begin hide *)
 Require Import List.
 Import ListNotations.
+(* end hide *)
 
-(** * Generic dependent data structures *)
+(** * Generic (dependently typed) data structures *)
+
+(** If you're reading this for the first time, you might want to
+    skip to the next section, Polymorphic lambda calculus. *)
+
+(** ** Bijections *)
 
 Record iso (A B : Type) : Type :=
   { iso_from : A -> B
@@ -85,7 +112,7 @@ Fixpoint ziphlist {A B : Type} {n : nat} (f : A -> B -> Type)
       (f (fst ts1) (fst ts2) * ziphlist f (snd ts1) (snd ts2))%type
   end.
 
-(** ** Bounded lookup *)
+(** *** Bounded lookup *)
 
 Fixpoint lookup_lilist {A : Type} {n : nat}
   : bnat n -> lilist A n -> A :=
@@ -134,7 +161,7 @@ Fixpoint lookup_ziphlist {A B} {f : A -> B -> Type} {n : nat}
 Definition rel_list {n : nat} : lilist Type n -> lilist Type n -> Type :=
   ziphlist (fun a b => a -> b -> Prop).
 
-(** ** Insertion *)
+(** *** Insertion *)
 
 (** "Insert" a number in the range [[0 .. n-1]] into the range [[0 .. n]],
     by sending [[0 .. m-1]] to itself, and [[m .. n-1]] to [[m+1 .. n]]. *)
@@ -205,6 +232,16 @@ Fixpoint insert_lookup_rel_list (m : nat) {n : nat}
 
 (** *** Types *)
 
+(**
+<<
+t ::= t -> t     (* Function *)
+    | forall t   (* Type generalization *)
+    | i          (* Type variable (DeBruijn index) *)
+    | unit       (* Unit type *)
+    | t * t      (* Product *)
+    | t + t      (* Sum *)
+>>
+  *)
 Inductive ty (n : nat) : Type :=
 | Arrow : ty n -> ty n -> ty n
 | Forall : ty (S n) -> ty n
@@ -249,34 +286,64 @@ Fixpoint shift_ty (m : nat) {n : nat} (t : ty n) : ty (S n) :=
 
 (** *** Terms *)
 
+Section Constants.
+
+Context {n : nat}.
+
 (** Constants *)
-Inductive cn {n : nat} : ty n -> Type :=
+Inductive cn : ty n -> Type :=
 | One : cn Unit
+  (* [unit] *)
+
 | Pair : cn (Forall (Forall (V1 -> V0 -> Prod V1 V0)))
-| Proj1 : cn (Forall (Forall (Prod V1 V0 -> V1)))
-| Proj2 : cn (Forall (Forall (Prod V1 V0 -> V0)))
+  (* [forall a b, a -> b -> a * b] *)
+
+| Fst : cn (Forall (Forall (Prod V1 V0 -> V1)))
+  (* [forall a b, a * b -> a] *)
+
+| Snd : cn (Forall (Forall (Prod V1 V0 -> V0)))
+  (* [forall a b, a * b -> b] *)
+
 | Inl : cn (Forall (Forall (V1 -> Sum V1 V0)))
+  (* [forall a b, a -> a + b] *)
+
 | Inr : cn (Forall (Forall (V0 -> Sum V1 V0)))
+  (* [forall a b, b -> a + b] *)
+
 | Case : cn (Forall (Forall (Forall (
     (V2 -> V0) ->
     (V1 -> V0) ->
     Sum V2 V1 -> V0))))
+  (* [forall a b c, (a -> c) -> (b -> c) -> (a + b -> c)] *)
 .
 
-Arguments One {n}.
-Arguments Pair {n}.
-Arguments Proj1 {n}.
-Arguments Proj2 {n}.
-Arguments Inl {n}.
-Arguments Inr {n}.
-Arguments Case {n}.
+End Constants.
 
+(**
+<<
+u ::= tyfun u   (* Type abstraction *)
+    | fun u     (* Value abstraction *)
+    | u u       (* Application *)
+    | i         (* Variable *)
+    | c         (* Constant *)
+>>
+  *)
 Inductive tm (n : nat) (vs : list (ty n)) : ty n -> Type :=
-| TAbs {t} : tm (S n) (map (shift_ty 0) vs) t -> tm n vs (Forall t)
-| Abs {t1 t2} : tm n (t1 :: vs) t2 -> tm n vs (Arrow t1 t2)
-| App {t1 t2} : tm n vs (Arrow t1 t2) -> tm n vs t1 -> tm n vs t2
-| Var (v : bnat (length vs)) : tm n vs (lookup_list vs v)
-| Con {t} : cn t -> tm n vs t
+| TAbs {t}
+  : tm (S n) (map (shift_ty 0) vs) t ->
+    tm n vs (Forall t)
+| Abs {t1 t2}
+  : tm n (t1 :: vs) t2 ->
+    tm n vs (Arrow t1 t2)
+| App {t1 t2}
+  : tm n vs (Arrow t1 t2) ->
+    tm n vs t1 ->
+    tm n vs t2
+| Var (v : bnat (length vs))
+  : tm n vs (lookup_list vs v)
+| Con {t}
+  : cn t ->
+    tm n vs t
 .
 
 Arguments TAbs {n vs t}.
@@ -295,6 +362,8 @@ Notation tm0 := (tm 0 []).
 
 (** ** Semantics *)
 
+(** *** Types *)
+
 (** Semantics of types as Coq types *)
 Fixpoint eval_ty {n : nat} (ts : lilist Type n) (t : ty n)
   : Type :=
@@ -310,6 +379,13 @@ Fixpoint eval_ty {n : nat} (ts : lilist Type n) (t : ty n)
 (** Semantics of types in the empty context. *)
 Definition eval_ty0 : ty 0 -> Type := @eval_ty 0 tt.
 
+(** *** Terms *)
+
+(** To evaluate terms, we need some auxiliary functions to update the context
+  when new type variables are introduced, together with the [Type] that the
+  variable denotes. *)
+
+(** Add a new variable-[Type] binding to the context of a term *)
 Fixpoint shift_eval (m : nat) {n : nat} {ts : lilist Type n} (t0 : Type) (t : ty n)
   : iso (eval_ty ts t) (@eval_ty (S n) (insert_lilist m t0 ts) (shift_ty m t)) :=
   match t with
@@ -333,6 +409,7 @@ Fixpoint shift_eval (m : nat) {n : nat} {ts : lilist Type n} (t0 : Type) (t : ty
   | Sum t1 t2 => iso_sum (shift_eval m t0 t1) (shift_eval m t0 t2)
   end.
 
+(** Add a new variable-[Type] binding to the context of a context. *)
 Fixpoint shift_hlist {n : nat} {ts : lilist Type n} {vs : list (ty n)} (t0 : Type)
   : hlist (eval_ty ts) vs -> hlist (@eval_ty (S n) (t0, ts)) (map (shift_ty 0) vs) :=
   match vs with
@@ -341,13 +418,14 @@ Fixpoint shift_hlist {n : nat} {ts : lilist Type n} {vs : list (ty n)} (t0 : Typ
     (iso_from (shift_eval 0 t0 _) (fst ts), shift_hlist t0 (snd ts))
   end.
 
+(** Semantics of constants as Coq values *)
 Definition eval_cn {n : nat} (ts : lilist Type n) {t : ty n} (c : cn t)
   : eval_ty ts t :=
   match c with
   | One => tt
   | Pair => @pair
-  | Proj1 => @fst
-  | Proj2 => @snd
+  | Fst => @fst
+  | Snd => @snd
   | Inl => @inl
   | Inr => @inr
   | Case => fun _ _ _ f g x =>
@@ -374,6 +452,8 @@ Fixpoint eval_tm
 (** Semantics of terms in the empty context *)
 Definition eval_tm0 {t : ty 0} : tm0 t -> eval_ty0 t :=
   @eval_tm 0 tt [] tt t.
+
+(** *** Types as relations *)
 
 (** Relational semantics of types *)
 Fixpoint eval2_ty {n : nat}
@@ -523,7 +603,7 @@ Proof.
   destruct vls1, vls2, v; cbn; intros []; auto.
 Qed.
 
-Definition param_cn {n : nat}
+Lemma param_cn {n : nat}
   (ts1 ts2 : lilist Type n)
   (rs : rel_list ts1 ts2)
   (t : ty n)
@@ -536,8 +616,8 @@ Proof.
   - do 2 destruct (_ : _ + _); contradiction + auto.
 Qed.
 
-(* Main theorem! Every term satisfies the logical relation of its type. *)
-Definition parametricity (n : nat)
+(** Main theorem! Every term satisfies the logical relation of its type. *)
+Theorem parametricity (n : nat)
   (ts1 ts2 : lilist Type n)
   (rs : rel_list ts1 ts2)
   (vs : list (ty n)) (vls1 : hlist (eval_ty ts1) vs) (vls2 : hlist (eval_ty ts2) vs)
@@ -566,7 +646,8 @@ Proof.
 Qed.
 
 (** Parametricity theorem in the empty context. *)
-Definition parametricity0 (t : ty 0) (u : tm0 t) : eval2_ty0 t (eval_tm0 u) (eval_tm0 u).
+Theorem parametricity0 (t : ty 0) (u : tm0 t)
+  : eval2_ty0 t (eval_tm0 u) (eval_tm0 u).
 Proof.
   apply parametricity. constructor.
 Qed.
