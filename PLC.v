@@ -140,9 +140,6 @@ Fixpoint lookup_ziphlist {A B} {f : A -> B -> Type} {n : nat}
       end
   end.
 
-Arguments lookup_ziphlist : simpl never.
-Arguments lookup_lilist : simpl never.
-
 Definition rel_list {n : nat} : lilist Type n -> lilist Type n -> Type :=
   ziphlist (fun a b => a -> b -> Prop).
 
@@ -468,6 +465,11 @@ Proof.
   apply IHm in H. auto.
 Qed.
 
+(* TODO: get rid of this hack of not unfolding these function. *)
+Section Hack_param_shift.
+Arguments lookup_ziphlist : simpl never.
+Arguments lookup_lilist : simpl never.
+
 Lemma param_shift (m : nat) {n : nat}
   (ts1 ts2 : lilist Type n)
   (rs : rel_list ts1 ts2)
@@ -498,6 +500,8 @@ Proof.
   - split; intros; destruct (_ : _ + _), (_ : _ + _);
       contradiction + apply IHt1 + apply IHt2; auto.
 Qed.
+
+End Hack_param_shift.
 
 Lemma param_tabs {n : nat}
   (ts1 ts2 : lilist Type n)
@@ -591,7 +595,6 @@ Compute (eval2_ty0 ID_ty).
 Example parametric_ID (t : tm0 ID_ty) (A : Type) (a : A)
   : (eval_tm0 t) A a = a.
 Proof.
-  pose proof (parametricity0 ID_ty t A A (fun x1 x2 => x1 = a)).
-  unfold lookup_ziphlist in H; simpl in H.
-  apply (H a a); auto.
+  pose proof (parametricity0 ID_ty t A A (fun x1 x2 => x1 = a) a a) as H.
+  simpl in H; auto.
 Qed.
