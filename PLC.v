@@ -63,6 +63,29 @@ Definition iso_sum {A A' B B'}
          end
     |}.
 
+Definition iso_fun {A A' B B'}
+  : iso A A' -> iso B B' -> iso (A -> B) (A' -> B') :=
+  fun ia ib =>
+    {| iso_from := fun f => fun x => iso_from ib (f (iso_to ia x))
+     ; iso_to := fun f => fun x => iso_to ib (f (iso_from ia x))
+    |}.
+
+Definition iso_forall {A : Type} {B B' : A -> Set}
+  : (forall a, iso (B a) (B' a)) -> iso (forall a, B a) (forall a, B' a) :=
+  fun ib =>
+    {| iso_from := fun f => fun x => iso_from (ib x) (f x)
+     ; iso_to := fun f => fun x => iso_to (ib x) (f x)
+    |}.
+
+Definition iso_trans {A B C : Set}
+  : iso A B -> iso B C -> iso A C :=
+  fun ab bc =>
+    {| iso_from := fun x => iso_from bc (iso_from ab x)
+     ; iso_to := fun x => iso_to ab (iso_to bc x)
+    |}.
+
+(** *** Properties *)
+
 Definition iso_eq {A A'}
   : A = A' -> iso A A' :=
   fun e =>
@@ -466,24 +489,55 @@ Definition eval_cn {n : nat} (ts : lilist Set n) {t : ty n} (c : cn t)
     end
   end.
 
-Lemma eval_ty_sub_ty (m : nat) {n : nat} (ts : lilist Set n) (u : ty n) (t : ty (S n))
-  : eval_ty ts (sub_ty m u t) = eval_ty (n := S n) (insert_lilist m (eval_ty ts u) ts) t.
+Lemma eval_ty_shift_ty (m : nat) {n : nat} (A : Set) (ts : lilist Set n) (t : ty n)
+  : iso (eval_ty (insert_lilist m A ts) (shift_ty m t)) (eval_ty ts t).
 Proof.
-  revert n t m ts u. fix self 2. intros n t m ts u. destruct t; simpl.
-  - apply (f_equal2 (fun x y : Set => x -> y)); auto.
-  - 
+Admitted.
+
+Lemma eval_ty_sub_tyvar (m : nat) {n : nat} (ts : lilist Set n) (us : lilist Set (S n)) (u : ty n) (v : bnat (S n))
+  : ziphlist iso (insert_lilist m (eval_ty ts u) ts) us ->
+    iso (eval_ty ts (match match_tyvar m v with Some v => v | None => u end)) (lookup_lilist v us).
+Proof.
+  revert m n ts us u v. fix self 1. intros m n ts us u v Hts.
+  destruct m, v; simpl.
+  - admit.
+  - admit.
+  - destruct n; simpl.
+    { destruct b. }
+    { replace (match match match_tyvar m b with Some w => Some (Some w) | None => None end with Some v => Tyvar (n := S n) v | None => u end) with (match match_tyvar m b with Some w => Tyvar (n := S n) (Some w) | None => u end).
+      { admit. }
+      { destruct match_tyvar; reflexivity. }
+    }
+  - destruct n; simpl.
+    { admit. }
+    { admit. }
+Admitted.
+
+Lemma eval_ty_sub_ty (m : nat) {n : nat} (ts : lilist Set n) (us : lilist Set (S n)) (u : ty n) (t : ty (S n))
+  : ziphlist iso (insert_lilist m (eval_ty ts u) ts) us ->
+    iso (eval_ty ts (sub_ty m u t)) (eval_ty (n := S n) us t).
+Proof.
+  revert n t m ts us u. fix self 2. intros n t m ts us u Hts. destruct t; simpl.
+  - apply iso_fun; auto.
+  - apply iso_forall; intros.
+    apply self.
+    constructor; [ apply iso_id | ].
+    simpl snd.
+    admit.
+  - apply eval_ty_sub_tyvar. auto.
+  - apply iso_id.
+  - apply iso_prod; auto.
+  - apply iso_sum; auto.
 Admitted.
 
 Lemma eval_ty_sub_ty_0 {n : nat} (ts : lilist Set n) (u : ty n) (t : ty (S n))
-  : eval_ty ts (sub_ty 0 u t) = eval_ty (n := S n) (eval_ty ts u, ts) t.
+  : iso (eval_ty ts (sub_ty 0 u t)) (eval_ty (n := S n) (eval_ty ts u, ts) t).
 Proof.
 Admitted.
 
 Definition coerce_eval_sub {n : nat} (ts : lilist Set n) (u : ty n) (t : ty (S n))
   : eval_ty (n := S n) (eval_ty ts u, ts) t -> eval_ty ts (sub_ty 0 u t) :=
-  match eval_ty_sub_ty_0 ts u t with
-  | eq_refl => fun x => x
-  end.
+  iso_to (eval_ty_sub_ty_0 ts u t).
 
 (** Semantics of terms as Coq values *)
 Fixpoint eval_tm
