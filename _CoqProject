@@ -1,2 +1,3 @@
 -Q ./ PLC
 ./PLC.v
+-arg -impredicative-set
